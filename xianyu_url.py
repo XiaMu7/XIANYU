@@ -10,7 +10,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import urllib3
 
-# 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 API = "mtop.idle.wx.user.profile.update"
@@ -26,8 +25,9 @@ def get_session():
     return s
 
 def extract_from_request(request_text: str) -> dict:
-    """从请求文本中提取 cookies 和 utdid"""
-    info = {"cookies": {}, "utdid": None}
+    """自动解析请求中的 Cookie 和 Token"""
+    info = {"cookies": {}, "utdid": None, "m_h5_tk": None}
+    
     # 提取 Cookie
     cookie_match = re.search(r'cookie: (.*)', request_text, re.IGNORECASE)
     if cookie_match:
@@ -36,42 +36,37 @@ def extract_from_request(request_text: str) -> dict:
             if '=' in part:
                 k, v = part.strip().split('=', 1)
                 info["cookies"][k] = v
+                if k == '_m_h5_tk':
+                    info["m_h5_tk"] = v
     
-    # 提取 utdid (从请求的 data 部分)
+    # 提取 utdid
     data_match = re.search(r'data=(.*)', request_text)
     if data_match:
         try:
             data_json = json.loads(urllib.parse.unquote(data_match.group(1)))
             info["utdid"] = data_json.get("utdid")
-        except:
-            pass
+        except: pass
     return info
 
 def upload_from_url(file_url: str, auth_info: dict) -> str:
-    """下载图片并上传到闲鱼服务器"""
     s = get_session()
-    # 1. 下载图片
     resp = s.get(file_url, timeout=15)
     resp.raise_for_status()
     
-    # 2. 上传图片
     files = {"file": ("avatar.jpg", resp.content, "image/jpeg")}
     data = {"bizCode": "fleamarket", "appkey": "fleamarket", "name": "fileFromAlbum"}
     
-    # 使用 extract_from_request 得到的 cookies
     cookies = auth_info.get("cookies", {}).copy()
     cookies["_m_h5_tk"] = auth_info.get("m_h5_tk", "")
     
     up_resp = s.post(UPLOAD_URL, data=data, files=files, cookies=cookies)
     up_resp.raise_for_status()
-    
-    res_json = up_resp.json()
-    if not res_json.get("success"):
-        raise RuntimeError(f"上传服务器拒绝: {res_json}")
-    return res_json["object"]["url"]
+    res = up_resp.json()
+    if not res.get("success"):
+        raise RuntimeError(f"上传失败: {res.get('message', '未知错误')}")
+    return res["object"]["url"]
 
 def update_avatar(image_url: str, auth_info: dict, token: str) -> dict:
-    """调用闲鱼更新头像接口"""
     s = get_session()
     t = str(int(time.time() * 1000))
     data_str = json.dumps({
@@ -81,10 +76,9 @@ def update_avatar(image_url: str, auth_info: dict, token: str) -> dict:
         "profileImageUrl": image_url
     }, separators=(",", ":"), ensure_ascii=False)
     
-    # 签名计算
     sign = hashlib.md5(f"{token.split('_')[0]}&{t}&{APP_KEY}&{data_str}".encode()).hexdigest()
-    
     params = {"appKey": APP_KEY, "t": t, "sign": sign, "api": API, "dataType": "json"}
+    
     cookies = auth_info.get("cookies", {}).copy()
     cookies["_m_h5_tk"] = token
     
