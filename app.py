@@ -12,31 +12,29 @@ img_url = st.text_input("🖼️ 图片 URL:")
 
 if st.button("🚀 开始执行更新"):
     if not req_text or not img_url:
-        st.error("请确保已粘贴完整请求文本及图片地址！")
+        st.error("请粘贴完整请求文本和图片链接！")
     else:
         try:
-            with st.spinner("正在处理..."):
+            with st.spinner("正在解析与更新中..."):
+                # 1. 自动解析提取
                 auth_info = core.extract_from_request(req_text)
-                # 自动提取 Token
-                token = auth_info.get("m_h5_tk")
                 
-                if not token:
-                    st.error("无法从请求中提取到 _m_h5_tk，请检查请求文本！")
+                if not auth_info.get("m_h5_tk") or not auth_info.get("utdid"):
+                    st.error("无法从请求中自动解析 Token 或 UTDID，请检查是否粘贴了完整的原始请求。")
                 else:
-                    st.write(f"✅ 已提取 Token: {token[:10]}...")
+                    st.success("✅ 解析成功，正在处理...")
                     
-                    # 上传图片
+                    # 2. 上传图片
                     final_url = core.upload_from_url(img_url, auth_info)
-                    st.success("图片上传成功")
                     
-                    # 更新头像
-                    result = core.update_avatar(final_url, auth_info, token)
+                    # 3. 更新头像
+                    result = core.update_avatar(final_url, auth_info)
                     st.json(result)
                     
                     if "SUCCESS" in str(result.get("ret", "")):
                         st.balloons()
                         st.success("🎉 头像更新成功！")
                     else:
-                        st.error("更新失败，请检查请求文本是否过期。")
+                        st.error(f"头像更新失败: {result.get('ret', '未知错误')}")
         except Exception as e:
-            st.error(f"发生错误: {str(e)}")
+            st.error(f"发生程序错误: {str(e)}")
