@@ -2,42 +2,6 @@ import streamlit as st
 import json
 import time
 
-# --- CSS 美化配置 (注入楷体与样式) ---
-st.markdown("""
-<style>
-    /* 全局字体设置为楷体 */
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&display=swap');
-    
-    html, body, [class*="css"] {
-        font-family: 'KaiTi', '楷体', 'Noto Serif SC', serif !important;
-    }
-    
-    /* 美化容器背景 */
-    .stApp {
-        background-color: #f4f7f6;
-    }
-    
-    /* 美化按钮 */
-    div.stButton > button {
-        border-radius: 20px;
-        border: none;
-        background-color: #4a90e2;
-        color: white;
-        font-weight: bold;
-        transition: 0.3s;
-    }
-    div.stButton > button:hover {
-        background-color: #357abd;
-    }
-    
-    /* 调整标题居中 */
-    h1 {
-        text-align: center;
-        color: #2c3e50;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # --- 界面逻辑 ---
 st.title("🐟 闲鱼动态头像自动更新")
 
