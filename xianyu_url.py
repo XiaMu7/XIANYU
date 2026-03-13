@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 import hashlib
 import json
-import mimetypes
 import time
 import re
 import urllib.parse
-from urllib.parse import urlencode, parse_qs
+from urllib.parse import urlencode
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -27,48 +26,52 @@ def get_session():
     return s
 
 def extract_from_request(request_text: str) -> dict:
-    """仅负责解析请求字符串，返回 auth_info 字典"""
-    info = {"cookies": {}, "headers": {}, "params": {}, "data": {}, "utdid": None}
-    lines = request_text.strip().split('\n')
+    """从请求文本中提取 cookies 和 utdid"""
+    info = {"cookies": {}, "utdid": None}
+    # 提取 Cookie
+    cookie_match = re.search(r'cookie: (.*)', request_text, re.IGNORECASE)
+    if cookie_match:
+        cookie_str = cookie_match.group(1)
+        for part in cookie_str.split(';'):
+            if '=' in part:
+                k, v = part.strip().split('=', 1)
+                info["cookies"][k] = v
     
-    # 简单的正则提取
-    for line in lines:
-        if ': ' in line:
-            key, value = line.split(': ', 1)
-            info["headers"][key] = value
-            if key.lower() == 'cookie':
-                # 简单解析cookie
-                for cookie in value.split(';'):
-                    if '=' in cookie:
-                        k, v = cookie.strip().split('=', 1)
-                        info["cookies"][k] = v
-    
+    # 提取 utdid (从请求的 data 部分)
     data_match = re.search(r'data=(.*)', request_text)
     if data_match:
         try:
             data_json = json.loads(urllib.parse.unquote(data_match.group(1)))
-            info["data"] = data_json
             info["utdid"] = data_json.get("utdid")
-        except: pass
+        except:
+            pass
     return info
 
 def upload_from_url(file_url: str, auth_info: dict) -> str:
-    """下载并上传图片，返回图片URL"""
+    """下载图片并上传到闲鱼服务器"""
     s = get_session()
+    # 1. 下载图片
     resp = s.get(file_url, timeout=15)
     resp.raise_for_status()
     
+    # 2. 上传图片
     files = {"file": ("avatar.jpg", resp.content, "image/jpeg")}
     data = {"bizCode": "fleamarket", "appkey": "fleamarket", "name": "fileFromAlbum"}
+    
+    # 使用 extract_from_request 得到的 cookies
     cookies = auth_info.get("cookies", {}).copy()
     cookies["_m_h5_tk"] = auth_info.get("m_h5_tk", "")
     
     up_resp = s.post(UPLOAD_URL, data=data, files=files, cookies=cookies)
     up_resp.raise_for_status()
-    return up_resp.json()["object"]["url"]
+    
+    res_json = up_resp.json()
+    if not res_json.get("success"):
+        raise RuntimeError(f"上传服务器拒绝: {res_json}")
+    return res_json["object"]["url"]
 
 def update_avatar(image_url: str, auth_info: dict, token: str) -> dict:
-    """执行头像更新"""
+    """调用闲鱼更新头像接口"""
     s = get_session()
     t = str(int(time.time() * 1000))
     data_str = json.dumps({
