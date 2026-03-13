@@ -1,34 +1,41 @@
 import streamlit as st
 import xianyu_core as core
+import time
+import hashlib
+import json
 
-st.set_page_config(page_title="闲鱼头像助手", layout="wide")
+st.set_page_config(page_title="闲鱼头像自动更新", layout="wide")
 st.title("🐟 闲鱼头像更新助手")
 
-# Step 1: 图片输入与预览
-st.subheader("1. 图片设置")
-image_url = st.text_input("请输入图片链接:")
-if image_url:
-    st.image(image_url, width=200, caption="预览图")
+# 1. 步骤：设置图片
+image_url = st.text_input("1. 输入新图片URL:")
+if image_url: st.image(image_url, width=150)
 
-# Step 2: 粘贴请求
-st.subheader("2. 粘贴 HTTP 请求")
-request_text = st.text_area("在此粘贴请求文本:", height=150)
+# 2. 步骤：粘贴请求
+request_text = st.text_area("2. 粘贴完整请求文本:", height=150)
 
-# 实时显示解析信息
-if request_text:
-    auth = core.extract_from_request(request_text)
-    st.info(f"解析到 UTDID: {auth.get('utdid')}")
-    st.code(f"解析到的 Token(cookie2): {auth.get('m_h5_tk', '无')}")
-
-# 执行按钮
-if st.button("🚀 执行更新"):
+if st.button("🚀 执行头像更新"):
     if not image_url or not request_text:
-        st.error("请确保图片链接和请求文本都已提供！")
+        st.error("请完整填写信息")
     else:
-        try:
-            res = core.update_avatar(image_url, auth)
-            st.json(res)
-            if "SUCCESS" in str(res):
-                st.success("成功！")
-        except Exception as e:
-            st.error(f"发生错误: {e}")
+        with st.spinner("处理中..."):
+            try:
+                # 解析
+                auth = core.extract_from_request(request_text)
+                utdid = auth["utdid"]
+                cookies = auth["cookies"]
+                
+                # 签名与更新头像逻辑直接内嵌在这里
+                token = cookies.get('cookie2', '').split('_')[0]
+                t = str(int(time.time() * 1000))
+                data_str = json.dumps({"utdid": utdid, "profileImageUrl": image_url}, separators=(",", ":"))
+                sign = hashlib.md5(f"{token}&{t}&{core.APP_KEY}&{data_str}".encode()).hexdigest()
+                
+                params = {"appKey": core.APP_KEY, "t": t, "sign": sign, "api": core.API, "dataType": "json"}
+                
+                # 发送
+                res = core.call_api(f"{core.BASE_URL}?{core.urlencode(params)}", {"data": data_str}, cookies)
+                st.json(res.json())
+                st.success("操作完成！")
+            except Exception as e:
+                st.error(f"发生错误: {str(e)}")
