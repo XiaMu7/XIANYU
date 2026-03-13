@@ -1,57 +1,95 @@
 import streamlit as st
-import time
+import hashlib, json, time, re, urllib.parse, requests, urllib3, base64
+from urllib.parse import urlparse, urlencode, parse_qs
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# --- 在这里放置你原本的闲鱼 API 请求函数 ---
-def perform_update(img_url, auth_data):
-    # 示例：这里写你真正的 requests.post 或其他请求逻辑
-    # 如果请求成功，返回 True；否则返回 False
-    print(f"正在更新头像: {img_url}")
-    time.sleep(2) # 模拟网络延迟
-    return True
+# 禁用SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+session = requests.Session()
+session.verify = False
 
-# --- 页面设置 ---
+# --- 全局变量 ---
+API = "mtop.idle.wx.user.profile.update"
+APP_KEY = "12574478"
+BASE_URL = "https://acs.m.goofish.com/h5/mtop.idle.wx.user.profile.update/1.0/"
+UPLOAD_URL = "https://stream-upload.goofish.com/api/upload.api"
+CURRENT_M_H5_TK = "717336018584e9c7c54f266f5db96fca_1772912434028"
+
+# --- 你的核心逻辑函数 ---
+def calc_sign(token, t, app_key, data_str):
+    raw = f"{token}&{t}&{app_key}&{data_str}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+def extract_from_request(request_text):
+    info = {"cookies": {}, "headers": {}, "data": {}, "utdid": None}
+    lines = request_text.strip().split('\n')
+    for line in lines:
+        if ': ' in line:
+            key, value = line.split(': ', 1)
+            info["headers"][key] = value
+            if key.lower() == 'cookie':
+                for pair in value.split('; '):
+                    if '=' in pair:
+                        k, v = pair.split('=', 1)
+                        info["cookies"][k] = v
+        if line.startswith('data='):
+            data_str = urllib.parse.unquote(line[5:])
+            try:
+                data_obj = json.loads(data_str)
+                info["data"] = data_obj
+                info["utdid"] = data_obj.get("utdid")
+            except: pass
+    return info
+
+def update_avatar(image_url, auth_info):
+    global CURRENT_M_H5_TK
+    cookies = auth_info.get("cookies", {}).copy()
+    cookies["_m_h5_tk"] = CURRENT_M_H5_TK
+    
+    data_obj = {"utdid": auth_info.get("utdid"), "platform": "mac", "profileCode": "avatar", "profileImageUrl": image_url}
+    data_str = json.dumps(data_obj, separators=(",", ":"), ensure_ascii=False)
+    t = str(int(time.time() * 1000))
+    token = CURRENT_M_H5_TK.split('_')[0]
+    sign = calc_sign(token, t, APP_KEY, data_str)
+    
+    params = {"jsv": "2.4.12", "appKey": APP_KEY, "t": t, "sign": sign, "v": "1.0", "api": API}
+    response = session.post(f"{BASE_URL}?{urlencode(params)}", cookies=cookies, data={"data": data_str}, verify=False)
+    return response.json()
+
+def upload_to_xianyu(file_url, auth_info):
+    # 简化上传流程：直接获取图片二进制
+    img_resp = requests.get(file_url, verify=False)
+    files = {"file": ("avatar.jpg", img_resp.content, "image/jpeg")}
+    data = {"appkey": "fleamarket", "bizCode": "fleamarket"}
+    response = session.post(UPLOAD_URL, files=files, data=data, cookies=auth_info["cookies"], verify=False)
+    return response.json().get("object", {}).get("url")
+    # --- 网页界面 ---
 st.set_page_config(page_title="闲鱼头像助手", page_icon="🐟")
-st.title("🐟 闲鱼动态头像自动更新")
+st.title("🐟 闲鱼头像自动更新")
 
-# 步骤 1：资源配置
-st.subheader("1. 准备头像资源")
-st.markdown("💡 提示：你可以前往 [Superbed 图床](https://www.superbed.cn/) 上传图片获取链接。")
-img_url = st.text_input("请输入图片 URL:", placeholder="https://...")
+img_url = st.text_input("请输入图片URL:")
+req_text = st.text_area("请粘贴完整的HTTP请求信息:", height=200)
 
-if img_url:
-    st.image(img_url, width=200, caption="待更新头像预览")
-
-# 步骤 2：身份认证
-st.subheader("2. 身份认证")
-with st.expander("点击设置认证参数", expanded=True):
-    mode = st.radio("选择方式", ["粘贴请求包", "手动输入"], horizontal=True)
-    if mode == "粘贴请求包":
-        req_text = st.text_area("请粘贴请求内容:", height=100)
+if st.button("🚀 开始同步头像"):
+    if not img_url or not req_text:
+        st.error("请确保输入内容完整！")
     else:
-        utdid = st.text_input("utdid")
-        cookie2 = st.text_input("cookie2")
-
-# 步骤 3：执行与校验
-st.markdown("---")
-if st.button("🚀 开始同步头像", use_container_width=True):
-    # --- 数据校验逻辑 ---
-    if not img_url:
-        st.error("❌ 错误：图片 URL 不能为空！")
-    elif mode == "粘贴请求包" and not req_text:
-        st.error("❌ 错误：请粘贴请求内容！")
-    elif mode == "手动输入" and (not utdid or not cookie2):
-        st.error("❌ 错误：请填写完整的 utdid 和 cookie2！")
-    else:
-        # --- 真正执行阶段 ---
-        with st.status("正在进行同步...", expanded=True) as status:
-            st.write("解析配置...")
-            # 这里调用你真实的逻辑
-            auth_info = req_text if mode == "粘贴请求包" else {"utdid": utdid, "cookie2": cookie2}
-            
-            success = perform_update(img_url, auth_info)
-            
-            if success:
-                status.update(label="✅ 操作完成！", state="complete")
-                st.balloons()
-            else:
-                status.update(label="❌ 同步失败，请检查 API 响应", state="error")
+        with st.status("正在处理...", expanded=True) as status:
+            try:
+                st.write("正在解析认证信息...")
+                auth = extract_from_request(req_text)
+                st.write("正在上传图片到闲鱼...")
+                final_url = upload_to_xianyu(img_url, auth)
+                st.write(f"图片已上传: {final_url}")
+                st.write("正在调用API更新头像...")
+                res = update_avatar(final_url, auth)
+                
+                st.json(res)
+                if "SUCCESS" in str(res.get("ret", "")):
+                    st.success("头像更新成功！")
+                    st.balloons()
+                else:
+                    st.error("更新失败，请检查返回结果")
+            except Exception as e:
+                st.error(f"发生错误: {str(e)}")
