@@ -1,6 +1,6 @@
 import streamlit as st
 # 请将你的原文件重命名为 xianyu_url.py
-import xianyu_url as core 
+import xianyu-URL as core 
 
 st.set_page_config(page_title="闲鱼头像助手", page_icon="🐟")
 st.title("🐟 闲鱼头像自动更新")
@@ -34,3 +34,4 @@ if st.button("🚀 执行更新"):
                 st.json(result)
         except Exception as e:
             st.error(f"出错啦: {str(e)}")
+
