@@ -1,5 +1,5 @@
 import streamlit as st
-import xianyu_core as core
+import xianyu_url as core
 
 st.set_page_config(page_title="闲鱼头像自动更新器", page_icon="🐟")
 st.title("🐟 闲鱼头像更新助手")
@@ -28,3 +28,4 @@ if st.button("🚀 开始执行更新"):
                         st.error(f"更新请求被服务器拒绝: {result}")
                 except Exception as e:
                     st.error(f"程序内部错误: {e}")
+
