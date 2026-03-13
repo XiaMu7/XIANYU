@@ -1,32 +1,48 @@
+import hashlib
+import time
+import requests
 import json
-import re
-import urllib.parse
 
-def extract_from_request(request_text: str) -> dict:
-    """从请求文本中解析关键凭证"""
-    info = {"cookies": {}, "utdid": None}
-    text = str(request_text)
-    
-    # 1. 提取 x-smallstc 中的 cookie2 (这是闲鱼最核心的令牌)
-    stc_match = re.search(r'x-smallstc: (\{.*?\})', text)
-    if stc_match:
-        try:
-            stc_json = json.loads(stc_match.group(1))
-            cookie2 = stc_json.get('cookie2')
-            if cookie2:
-                # 闲鱼 API 需要 cookie2 字段，且通常也需要 _m_h5_tk 键
-                info["cookies"]['cookie2'] = str(cookie2)
-                info["cookies"]['_m_h5_tk'] = str(cookie2).split('_')[0]
-                # 额外同步其他关键凭证
-                for key in ['sgcookie', 'sid']:
-                    if key in stc_json:
-                        info["cookies"][key] = str(stc_json[key])
-        except Exception as e:
-            print(f"解析 x-smallstc 异常: {e}")
-            
-    # 2. 提取 UTDID (通过 data 字段)
-    data_match = re.search(r'data=%7B%22utdid%22%3A%22(.*?)%22', text)
-    if data_match:
-        info["utdid"] = data_match.group(1)
+class XianyuClient:
+    def __init__(self, auth_info):
+        self.auth = auth_info
+        self.session = requests.Session()
+        self.app_key = "12574478"
+        self.base_url = "https://acs.m.goofish.com/h5/mtop.idle.wx.user.profile.update/1.0/"
+
+    def get_sign(self, token, t, data_str):
+        return hashlib.md5(f"{token}&{t}&{self.app_key}&{data_str}".encode()).hexdigest()
+
+    def update_avatar(self, image_url):
+        utdid = self.auth.get("utdid")
+        data_json = {"utdid": utdid, "profileImageUrl": image_url}
+        data_str = json.dumps(data_json, separators=(",", ":"))
         
-    return info
+        # 初始 Token 从 auth 提取
+        cookie2 = self.auth["cookies"].get("cookie2", "")
+        token = cookie2.split('_')[0]
+        
+        for attempt in range(2):  # 自动重试 2 次
+            t = str(int(time.time() * 1000))
+            sign = self.get_sign(token, t, data_str)
+            params = {"appKey": self.app_key, "t": t, "sign": sign, "api": "mtop.idle.wx.user.profile.update", "dataType": "json"}
+            
+            res = self.session.post(
+                f"{self.base_url}?{requests.utils.urlencode(params)}",
+                data={"data": data_str},
+                cookies=self.auth["cookies"],
+                verify=False
+            )
+            
+            res_data = res.json()
+            # 检查是否有新 Token
+            new_tk = res.cookies.get('_m_h5_tk')
+            if new_tk:
+                token = new_tk.split('_')[0]
+                self.auth["cookies"]["cookie2"] = new_tk
+            
+            if "SUCCESS" in str(res_data.get("ret", "")):
+                return {"status": "success", "data": res_data}
+            
+            time.sleep(1) # 稍作停顿再重试
+        return {"status": "fail", "data": res_data}
