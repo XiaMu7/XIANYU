@@ -58,12 +58,18 @@ def update_avatar(image_url, auth_info):
     return response.json()
 
 def upload_to_xianyu(file_url, auth_info):
-    # 简化上传流程：直接获取图片二进制
     img_resp = requests.get(file_url, verify=False)
     files = {"file": ("avatar.jpg", img_resp.content, "image/jpeg")}
     data = {"appkey": "fleamarket", "bizCode": "fleamarket"}
+    
     response = session.post(UPLOAD_URL, files=files, data=data, cookies=auth_info["cookies"], verify=False)
-    return response.json().get("object", {}).get("url")
+    
+    # --- 调试代码：看看上传接口到底返回了什么 ---
+    st.write("--- 上传接口原始返回 ---")
+    st.text(response.text) 
+    
+    body = response.json() # 如果这里报错，说明返回的根本不是 JSON
+    return body.get("object", {}).get("url")
     # --- 网页界面 ---
 st.set_page_config(page_title="闲鱼头像助手", page_icon="🐟")
 st.title("🐟 闲鱼头像自动更新")
@@ -93,3 +99,4 @@ if st.button("🚀 开始同步头像"):
                     st.error("更新失败，请检查返回结果")
             except Exception as e:
                 st.error(f"发生错误: {str(e)}")
+
