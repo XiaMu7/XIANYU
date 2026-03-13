@@ -3,89 +3,115 @@
 
 import hashlib
 import json
+import mimetypes
 import time
-import requests
+import sys
+import re
 import urllib.parse
+from urllib.parse import urlparse, urlencode, parse_qs
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import urllib3
-from urllib.parse import urlencode
 
+# 禁用SSL警告与验证
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-session = requests.Session()
-session.verify = False
 
+# 全局配置
 API = "mtop.idle.wx.user.profile.update"
 APP_KEY = "12574478"
 BASE_URL = "https://acs.m.goofish.com/h5/mtop.idle.wx.user.profile.update/1.0/"
 UPLOAD_URL = "https://stream-upload.goofish.com/api/upload.api"
+CURRENT_M_H5_TK = "717336018584e9c7c54f266f5db96fca_1772912434028"
+
+session = requests.Session()
+session.verify = False
 
 def calc_sign(token: str, t: str, app_key: str, data_str: str) -> str:
-    """计算 Mtop 签名，没有它，接口会拒绝访问"""
+    """计算 Mtop 签名"""
     raw = f"{token}&{t}&{app_key}&{data_str}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 def extract_from_request(request_text: str) -> dict:
-    info = {"cookies": {}, "headers": {}, "data": {}, "utdid": None, "token": ""}
+    """从原始请求文本中提取完整的上下文信息"""
+    info = {"cookies": {}, "headers": {}, "data": {}, "utdid": None}
     lines = request_text.strip().split('\n')
     for line in lines:
         if ': ' in line:
             key, value = line.split(': ', 1)
             info["headers"][key.strip()] = value.strip()
-            if key.strip().lower() == 'cookie':
+            if key.lower() == 'cookie':
                 for pair in value.split('; '):
                     if '=' in pair:
                         k, v = pair.split('=', 1)
                         info["cookies"][k] = v
-                        if k == '_m_h5_tk': info["token"] = v.split('_')[0]
-        if 'data=' in line:
-            info["data"] = json.loads(urllib.parse.unquote(line.split('data=')[1]))
-            info["utdid"] = info["data"].get("utdid")
+        elif line.startswith('data='):
+            data_str = urllib.parse.unquote(line[5:])
+            try:
+                info["data"] = json.loads(data_str)
+                info["utdid"] = info["data"].get("utdid")
+            except: pass
     return info
 
-def upload_to_xianyu(image_url: str, auth_info: dict) -> str:
-    img_resp = session.get(image_url, verify=False)
-    headers = {
-        "User-Agent": auth_info["headers"].get("user-agent"),
-        "bx-umidtoken": auth_info["headers"].get("bx-umidtoken"),
-        "x-ticid": auth_info["headers"].get("x-ticid"),
-        "mini-janus": auth_info["headers"].get("mini-janus"),
-        "x-tap": auth_info["headers"].get("x-tap"),
-        "sgcookie": auth_info["headers"].get("sgcookie"),
-        "xweb_xhr": "1",
-        "Referer": "https://servicewechat.com/wx9882f2a891880616/74/page-frame.html"
+def update_avatar(image_url: str, auth_info: dict) -> dict:
+    """调用头像更新接口"""
+    global CURRENT_M_H5_TK
+    
+    # 动态获取 Token
+    token = CURRENT_M_H5_TK.split('_')[0]
+    t = str(int(time.time() * 1000))
+    
+    data_obj = {
+        "utdid": auth_info.get("utdid"),
+        "platform": "mac",
+        "profileCode": "avatar",
+        "profileImageUrl": image_url
     }
+    data_str = json.dumps(data_obj, separators=(",", ":"), ensure_ascii=False)
+    sign = calc_sign(token, t, APP_KEY, data_str)
+    
+    params = {"jsv": "2.4.12", "appKey": APP_KEY, "t": t, "sign": sign, "v": "1.0", "api": API}
+    cookies = {**auth_info.get("cookies", {}), "_m_h5_tk": CURRENT_M_H5_TK}
+    
+    response = session.post(f"{BASE_URL}?{urlencode(params)}", cookies=cookies, data={"data": data_str})
+    
+    # 自动更新 Token
+    if '_m_h5_tk' in response.cookies:
+        CURRENT_M_H5_TK = response.cookies['_m_h5_tk']
+        
+    return response.json()
+
+def upload_to_xianyu(file_url: str, auth_info: dict) -> str:
+    """上传图片至闲鱼图床"""
+    img_resp = session.get(file_url, stream=True)
     files = {"file": ("avatar.jpg", img_resp.content, "image/jpeg")}
     data = {"appkey": "fleamarket", "bizCode": "fleamarket"}
     
-    resp = session.post(UPLOAD_URL, files=files, data=data, headers=headers, cookies=auth_info["cookies"])
-    result = resp.json()
-    if not result.get("success"):
-        raise Exception(f"上传失败: {result}")
-    return result["object"]["url"]
+    resp = session.post(UPLOAD_URL, files=files, data=data, cookies=auth_info["cookies"])
+    body = resp.json()
+    return body.get("object", {}).get("url")
 
-def update_avatar(final_url: str, auth_info: dict):
-    t = str(int(time.time() * 1000))
-    data_obj = {"utdid": auth_info["utdid"], "platform": "windows", "profileCode": "avatar", "profileImageUrl": final_url}
-    data_str = json.dumps(data_obj, separators=(",", ":"), ensure_ascii=False)
+# 
+
+def main():
+    print("🐟 闲鱼头像助手已启动...")
+    img_url = input("输入图片URL: ").strip()
+    req_text = input("粘贴完整请求信息 (输入END结束):\n") # 这里简化了交互逻辑
     
-    # 【修复核心点】：必须生成正确的 sign
-    sign = calc_sign(auth_info["token"], t, APP_KEY, data_str)
+    auth = extract_from_request(req_text)
     
-    params = {"jsv": "2.4.12", "appKey": APP_KEY, "t": t, "sign": sign, "api": API, "v": "1.0", "type": "originaljson"}
-    
-    resp = session.post(f"{BASE_URL}?{urlencode(params)}", 
-                        headers={"User-Agent": auth_info["headers"].get("user-agent")},
-                        cookies=auth_info["cookies"], 
-                        data={"data": data_str})
-    return resp.json()
+    try:
+        print("🚀 正在同步头像...")
+        final_url = upload_to_xianyu(img_url, auth)
+        res = update_avatar(final_url, auth)
+        
+        if "SUCCESS" in str(res.get("ret", "")):
+            print("✅ 更新成功！")
+        else:
+            print(f"❌ 更新失败: {res}")
+            
+    except Exception as e:
+        print(f"💥 发生错误: {e}")
 
 if __name__ == "__main__":
-    req_raw = input("请粘贴完整请求信息:\n")
-    img_url = input("请输入图片URL:\n")
-    auth = extract_from_request(req_raw)
-    try:
-        final_url = upload_to_xianyu(img_url, auth)
-        print(f"✅ 上传成功: {final_url}")
-        res = update_avatar(final_url, auth)
-        print(f"🔄 更新结果: {res}")
-    except Exception as e:
-        print(f"❌ 错误: {e}")
+    main()
